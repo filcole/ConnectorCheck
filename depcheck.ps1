@@ -3,7 +3,7 @@
 param (
     #[Parameter(Mandatory = $true)]
     [string]$solnfolder = 'C:\Dev\AxisK2\SolutionPackage\AxisK2CloudFlows', # FiXME
-    [switch]$skipCloudFlows = $false,
+    [switch]$skipCloudFlows = $true,
     [switch]$skipPowerFx = $false
 )
 
@@ -163,6 +163,8 @@ Function ScanMsApps {
 Function ScanUnpackedMsApp {
     Param ([string]$folder)
 
+    $actionUsages = New-Object System.Collections.ArrayList
+
     Write-Debug "Examining PowerFx in $folder"
 
     $connectionsFilename = Join-Path $folder "Connections"
@@ -192,29 +194,38 @@ Function ScanUnpackedMsApp {
 
     # Fixme need to extend this
 
-    $connectorRegex = $connectors.keys | Join-String -Separator "|"
+    $connectors = $connectors.keys | Join-String -Separator "|"
+    $connectors = "AzureBlobStorage|SpatialServices"
+    $regex = "((^|[^\w])(?<connector>(${connectors}))\.(?<action>\w+))+"
+    Write-Host "regex=$regex"
+    [regex]$rx = $regex
 
     # Search the PowerFx files, and see if they contain any usages of each dataSource
-    ChildItem -Path $folder -Filter *.fx.yaml -Recurse -File | ForEach-Object {
+    Get-ChildItem -Path $folder -Filter *.fx.yaml -Recurse -File | ForEach-Object {
 
-        $c = Get-Content -Path $_.FullName 
+        $filepath = $_.FullName
 
-        $regex = "(([^\w])($connectorRegex)\.(\w+))+"
-        Write-Host "regex=$regex"
-        
+        $c = Get-Content -Path $filepath
+
         $d = $c | Where-Object { $_ -match $regex }
+        if ($null -ne $d) {
 
-        $d | ForEach-Object {
-            $match = $_ -match "(^|[^\w])($connectorRegex)\.(?<action>\w+)\(.*$"
-            Write-Host "match"
+            $d | ForEach-Object {
+                $line = $_
+
+                Write-Host "Testing Line $line"
+        
+                $results = $rx.Match( $line )
+
+                if ($results.Success) {
+                    foreach ($actionmatch in $results) {
+                        Write-Host "Connector" $actionmatch.Groups["connector"].Value
+                        Write-Host "Action" $actionmatch.Groups["action"].Value
+                    }
+                }
+            }
         }
-
-
-
-        #[System.IO.Path]::GetFileNameWithoutExtension($_)
     }
-
-
 }
 
 ## MAIN BODY
