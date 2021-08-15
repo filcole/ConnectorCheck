@@ -2,8 +2,8 @@
 
 param (
     #[Parameter(Mandatory = $true)]
-    [string]$solnfolder = 'C:\Dev\AxisK2\SolutionPackage\AxisK2CloudFlows', # FiXME
-    [switch]$skipCloudFlows = $true,
+    [string]$solnfolder = 'C:\Dev\AxisK2\SolutionPackage\AxisK2MobileApp', # FiXME
+    [switch]$skipCloudFlows = $false,
     [switch]$skipPowerFx = $false
 )
 
@@ -36,6 +36,9 @@ Function StoreUsedAction {
     else {
         $usedAction.add(${key}, 1)
     }
+
+
+    
 }
 
 Function RemoveLeadingString {
@@ -157,15 +160,18 @@ Function ScanMsApps {
     
     # FIXME: Loop for app canvas apps
     # FIXME: Prevent hardcdoed
-    ScanUnpackedMsApp -folder "C:\Dev\AxisK2\SolutionPackage\AxisK2MobileApp\CanvasAppsSrc\ebecs_axismobileappwithiamap_3e0f5_DocumentUri_src"
+    Write-Host "Solnfolder=${solnfolder}"
+
+    Get-ChildItem -Path $solnfolder -Filter CanvasManifest.json -Recurse  | ForEach-Object {
+        Write-Host $_.FullName
+        ScanUnpackedMsApp -folder $_.Directory.FullName
+    }
 }
 
 Function ScanUnpackedMsApp {
     Param ([string]$folder)
 
-    $actionUsages = New-Object System.Collections.ArrayList
-
-    Write-Debug "Examining PowerFx in $folder"
+    Write-Host "Examining PowerFx in $folder"
 
     $connectionsFilename = Join-Path $folder "Connections"
     $connectionsFilename = Join-Path $connectionsFilename "Connections.json"
@@ -195,35 +201,35 @@ Function ScanUnpackedMsApp {
     # Fixme need to extend this
 
     $connectors = $connectors.keys | Join-String -Separator "|"
-    $connectors = "AzureBlobStorage|SpatialServices"
+    #$connectors = "AzureBlobStorage|SpatialServices"
     $regex = "((^|[^\w])(?<connector>(${connectors}))\.(?<action>\w+))+"
-    Write-Host "regex=$regex"
+    Write-Debug "Searching using regex: $regex"
     [regex]$rx = $regex
 
     # Search the PowerFx files, and see if they contain any usages of each dataSource
     Get-ChildItem -Path $folder -Filter *.fx.yaml -Recurse -File | ForEach-Object {
 
         $filepath = $_.FullName
-
+        $linenum = 1
         $c = Get-Content -Path $filepath
 
-        $d = $c | Where-Object { $_ -match $regex }
-        if ($null -ne $d) {
-
-            $d | ForEach-Object {
-                $line = $_
-
-                Write-Host "Testing Line $line"
-        
-                $results = $rx.Match( $line )
-
-                if ($results.Success) {
-                    foreach ($actionmatch in $results) {
-                        Write-Host "Connector" $actionmatch.Groups["connector"].Value
-                        Write-Host "Action" $actionmatch.Groups["action"].Value
-                    }
+        $c | ForEach-Object {
+            $results = $rx.Match( $_ )
+            
+            if ($results.Success) {
+                foreach ($actionmatch in $results) {
+                    $connector = $actionmatch.Groups["connector"].Value
+                    $operationId = $actionmatch.Groups["action"].Value
+                    $location = "Power Fx"
+                    $path = "${filepath}:${linenum}"
+                    
+                    Write-Host "${connector}:${operationId} in ${filepath}:${linenum}" 
+                    
+                    StoreUsedAction $connector $operationId 
                 }
             }
+
+            $linenum = $linenum + 1
         }
     }
 }
@@ -242,7 +248,7 @@ if ($skipPowerFx -ne $true) {
 
 Write-Output "`nSummary:`n"
 
-$usedAction.GetEnumerator() | ForEach-Object {
+$usedAction.GetEnumerator() | Sort-Object { $_. } ForEach-Object {
     $isDeprecated = "";
     if ($hash.ContainsKey($_.key)) {
         $isDeprecated = "*** DEPRECATED *** "
