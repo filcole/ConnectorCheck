@@ -1,19 +1,51 @@
-# Check for deprecated actions in Power Automate Cloud Flows or Canvas Apps
+# Check for deprecated actions in Power Automate Cloud Flows or unpacked Canvas Apps
+# Note: The solution file structure is proprietary and subject Cloud flows will exist
 
 param (
-    #[Parameter(Mandatory = $true)]
-    [string]$solnfolder = 'C:\Dev\AxisK2\SolutionPackage\AxisK2MobileApp', # FiXME
+    [Parameter(Mandatory = $true)]
+    [string]$solnfolder,
     [switch]$skipCloudFlows = $false,
     [switch]$skipPowerFx = $false
 )
+
+$deprecatedActions = @{}
+$usedActions = [System.Collections.Generic.List[ActionUsage]]::new()
+
+class ActionUsage {
+    # Prevent invalid values
+    [ValidateNotNullOrEmpty()][string]$Connector
+    [ValidateNotNullOrEmpty()][string]$Action
+    [ValidateNotNullOrEmpty()][string]$Filename
+    [ValidateNotNullOrEmpty()][string]$Type
+    [string]$ActionUniqueName
+    [string]$Description
+    [string]$ConnectionRef
+    [int]$LineNum
+    [bool]$Deprecated
+
+    # Have a constructor to force properties to be set
+    ActionUsage($Connector, $Action, $Filename, $Type) {
+        $this.Connector = $Connector
+        $this.Action = $Action
+        $this.Filename = $Filename
+        $this.Type = $Type
+        $this.ActionUniqueName = BuildKey -connector $Connector -action $Action
+        $this.Deprecated = IsActionDeprecated($this.ActionUniqueName)
+    }
+}
 
 if ($skipCloudFlows -and $skipPowerFx) {
     Write-Error "Nothing to do. Only one of skipCloudFlows or skipPowerFx can be set."
     exit
 }
 
-$hash = @{}
-$usedAction = @{}
+Function IsActionDeprecated([string]$key) {
+    
+    if ($deprecatedActions.ContainsKey($key)) {
+        return $true
+    }
+    return $false
+}
 
 Function Get-DeepProperty([object] $InputObject, [string] $Property) {
     $path = $Property -split '\.'
@@ -22,23 +54,11 @@ Function Get-DeepProperty([object] $InputObject, [string] $Property) {
     $obj
 }
 
-Function StoreUsedAction {
+Function BuildKey {
     param ([string]$connector, [string]$action)
 
     $key = "${connector}|${action}"
-    
-    # FIXME: This is pretty lame, but so is my powershell skills
-    if ( $usedAction.ContainsKey(${key}) ) {
-        $count = $usedAction[${key}]
-        $newCount = $count + 1
-        $usedAction[$key] = $newCount
-    }
-    else {
-        $usedAction.add(${key}, 1)
-    }
-
-
-    
+    return $key
 }
 
 Function RemoveLeadingString {
@@ -83,11 +103,15 @@ Function LogDeprecatedFlowActions {
                 $type = "${connector}:${operationId} via ${connRefLogicalName}"
 
                 $key = "${connector}|${operationId}"
-                if ($hash.ContainsKey($key)) { 
+                if ($deprecatedActions.ContainsKey($key)) { 
                     Write-Host "Deprecated action in flow ${filename}: ${operationId} on connector ${connector} (connectionRef: ${connRefLogicalName}) in step ${actionName}: ${description}"
                 }
 
-                StoreUsedAction $connector $operationId
+                # Store action usage
+                $usage = [ActionUsage]::new($connector, $action, $filename, "CloudFlow")
+                $usage.Description = "${actionName}: ${description}"
+                $usage.ConnectionRef = $connRefLogicalName
+                $usedActions.add($usage)
             }
         }
 
@@ -114,8 +138,7 @@ Function ReadDeprecatedActions {
     ## FIXME: Hardcoded deprecated
     $deprecatedfilename = Join-Path ${PSScriptRoot} "Deprecated.json"
 
-    $deprecatedActions = Get-Content $deprecatedfilename | ConvertFrom-Json
-    $deprecatedActions | Foreach-Object {
+    Get-Content $deprecatedfilename | ConvertFrom-Json | Foreach-Object {
         $connector = $_;
         $uniqueName = $_.UniqueName;
 
@@ -124,19 +147,25 @@ Function ReadDeprecatedActions {
             $operationId = $_.OperationId
 
             $key = "${uniqueName}|${operationId}"
-            $hash[$key] = [PSCustomObject]@{
+            $deprecatedActions[$key] = [PSCustomObject]@{
                 Connector = $connector
                 Action    = $action
             }
         }
     }
-    Write-Host "Read" $hash.Count "deprecated actions"
+    Write-Host "Read" $deprecatedActions.Count "deprecated actions"
 }
 
 
 
 Function ScanFlows {
     $workflowfolder = Join-Path $solnfolder "Workflows"
+
+    if (!( Test-Path $workflowfolder -PathType Container)) {
+        Write-Host "No flows exist in solution"
+        return
+    }
+
     Write-Host "Scanning flows in $workflowfolder"
     
     # Perhaps we could check the metadata xml relating to the flow to check if it's a cloud flow.
@@ -155,30 +184,26 @@ Function ScanFlows {
     }
 }
 
-Function ScanMsApps {
-    # FIXME: Unpac canvas app
-    
-    # FIXME: Loop for app canvas apps
-    # FIXME: Prevent hardcdoed
-    Write-Host "Solnfolder=${solnfolder}"
-
+Function ScanAllCanvasApps {
+    # NOTE: We expect the canvas apps in the solution to have already been exploded with 'pac canvas unpac'
+    # An unpacked canvas app can be identified in a solution by the existnace of the 'CanvasManifest.json' file
     Get-ChildItem -Path $solnfolder -Filter CanvasManifest.json -Recurse  | ForEach-Object {
-        Write-Host $_.FullName
-        ScanUnpackedMsApp -folder $_.Directory.FullName
+        ScanUnpackedCanvasApp -folder $_.Directory.FullName
     }
 }
 
-Function ScanUnpackedMsApp {
+Function ScanUnpackedCanvasApp {
     Param ([string]$folder)
 
-    Write-Host "Examining PowerFx in $folder"
+    Write-Host "Examining Power Fx in $folder"
 
+    # Read "Connections.json" file
     $connectionsFilename = Join-Path $folder "Connections"
     $connectionsFilename = Join-Path $connectionsFilename "Connections.json"
-
     $connections = Get-Content $connectionsFilename | ConvertFrom-Json
-
     $connectionObjects = Get-Member -InputObject $connections -MemberType NoteProperty
+
+    # Find all connectors used in Connections.json
 
     $connectors = @{}
 
@@ -186,7 +211,6 @@ Function ScanUnpackedMsApp {
 
         $connection = $connections | Select-Object -ExpandProperty $connectionObject.Name
 
-        $id = $connection.id
         $connector = $connection.connectionRef.id
         $displayName = $connection.connectionRef.displayName
         $dataSources = $connection.dataSources[0]
@@ -195,18 +219,16 @@ Function ScanUnpackedMsApp {
 
         $connectors.Add($dataSources, 1)
 
-        Write-Host "Using connector $connector ($displayName) $dataSources"
+        Write-Host "Uses connector $connector ($displayName) $dataSources"
     }
 
-    # Fixme need to extend this
-
+    # Build a regex to search the *.fx.yaml Power Fx files
     $connectors = $connectors.keys | Join-String -Separator "|"
-    #$connectors = "AzureBlobStorage|SpatialServices"
     $regex = "((^|[^\w])(?<connector>(${connectors}))\.(?<action>\w+))+"
     Write-Debug "Searching using regex: $regex"
     [regex]$rx = $regex
 
-    # Search the PowerFx files, and see if they contain any usages of each dataSource
+    # Search the Power Fx files, and see if they contain any usages of each dataSource
     Get-ChildItem -Path $folder -Filter *.fx.yaml -Recurse -File | ForEach-Object {
 
         $filepath = $_.FullName
@@ -220,12 +242,12 @@ Function ScanUnpackedMsApp {
                 foreach ($actionmatch in $results) {
                     $connector = $actionmatch.Groups["connector"].Value
                     $operationId = $actionmatch.Groups["action"].Value
-                    $location = "Power Fx"
-                    $path = "${filepath}:${linenum}"
                     
                     Write-Host "${connector}:${operationId} in ${filepath}:${linenum}" 
                     
-                    StoreUsedAction $connector $operationId 
+                    $usage = [ActionUsage]::new($connector, $operationId, $filepath, "Power Fx")
+                    $usage.LineNum = $linenum
+                    $usedActions.add($usage)
                 }
             }
 
@@ -243,16 +265,30 @@ if ($skipCloudFlows -ne $true) {
 }
 
 if ($skipPowerFx -ne $true) {
-    ScanMsApps
+    ScanAllCanvasApps
 }
 
-Write-Output "`nSummary:`n"
+$numUsedActions = $usedActions.Count
 
-$usedAction.GetEnumerator() | Sort-Object { $_. } ForEach-Object {
-    $isDeprecated = "";
-    if ($hash.ContainsKey($_.key)) {
-        $isDeprecated = "*** DEPRECATED *** "
+Write-Output "`nSummary of $numUsedActions usages:`n" 
+
+$usedActions | Group-Object -Property ActionUniqueName -NoElement | Sort-Object -Property Count -Descending | ForEach-Object {
+    $deprecatedWarning = "";
+    if ($deprecatedActions.ContainsKey($_.Name)) {
+        $deprecatedWarning = "*** DEPRECATED *** "
     }
-    $message = "{1,3} usages of {2}{0}" -f $_.key, $_.value, $isDeprecated
-    Write-Output $message
+
+    $message = "{0,3} usages of {2}{1}" -f $_.Count, $_.Name, $deprecatedWarning
+    Write-Host $message
+}
+
+$deprecatedUsages = $usedActions | Where-Object -Property Deprecated -EQ -Value $true
+
+$numDeprecatedUsages = $deprecatedUsages.Count
+
+Write-Output "`nUsages of deprecated actions: $numDeprecatedUsages`n"
+
+$deprecatedUsages | ForEach-Object {
+    $message = "{0}|{1} in {2} at {3}:{4}" -f $_.Connector, $_.Action, $_.Type, $_.Filename, $_.LineNum
+    Write-Host $message
 }
