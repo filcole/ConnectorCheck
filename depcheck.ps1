@@ -8,10 +8,10 @@ param (
     [switch]$skipPowerFx = $false
 )
 
-Set-StrictMode -Version Latest
-
-
+# Hash of deprecated actions read in a pre-generated JSON file containing deprecated actions
 $deprecatedActions = @{}
+
+# List of actions found in flows and Power Fx (canvas apps) scanned
 $usedActions = [System.Collections.Generic.List[ActionUsage]]::new()
 
 class ActionUsage {
@@ -68,7 +68,6 @@ Function BuildKey {
     return "${connector}|${action}"
 }
 
-
 Function IsActionDeprecated([string]$key) {
     
     if ($deprecatedActions.ContainsKey($key)) {
@@ -93,6 +92,16 @@ Function RemoveLeadingString {
     return $inputStr
 }
 
+Function CheckIsSolutionFolder {
+    $solnxml = Join-Path $solnfolder "Other"
+    $solnxml = Join-Path $solnxml "Solution.xml"
+
+    if (!( Test-Path $solnxml -PathType Leaf)) {
+        Write-Error "Not valid solution folder. $solnxml does not exist"
+        exit
+    }
+}
+
 Function ScanFlows {
     $workflowfolder = Join-Path $solnfolder "Workflows"
 
@@ -110,8 +119,8 @@ Function ScanFlows {
     Foreach-Object {
         
         $flowFilename = $_.FullName
-    
-        Write-Host "Scanning flow "$flowFilename
+
+        Write-Host "Scanning flow"$_.Name
     
         $flow = Get-Content $flowFilename | ConvertFrom-Json
     
@@ -149,7 +158,7 @@ Function ScanFlowActions {
                 $propertyPath = "properties.connectionReferences." + $connectionRef + ".api.name"
                 $connector = Get-DeepProperty -InputObject $flow -Property $propertyPath
 
-                $connector = RemoveLeadingString -inputStr $connector --leading "shared_"
+                $connector = RemoveLeadingString -inputStr $connector -leading "shared_"
 
                 $connRefLogicalNamePath = "properties.connectionReferences." + $connectionRef + ".connection.connectionReferenceLogicalName"
                 $connRefLogicalName = Get-DeepProperty -InputObject $flow -Property $connRefLogicalNamePath
@@ -197,7 +206,7 @@ Function ScanAllCanvasApps {
 Function ScanUnpackedCanvasApp {
     Param ([string]$folder)
 
-    Write-Host "Examining Power Fx in $folder"
+    Write-Host "Scanning CanvasApp in $folder"
 
     # Read "Connections.json" file
     $connectionsFilename = Join-Path $folder "Connections"
@@ -224,6 +233,11 @@ Function ScanUnpackedCanvasApp {
         Write-Host "Uses connector $connector ($displayName) $dataSources"
     }
 
+    if ($connectors.Keys.Count -eq 0) {
+        Write-Host "No connectors found in canvas app"
+        return
+    }
+
     # Build a regex to search the *.fx.yaml Power Fx files
     $connectors = $connectors.keys | Join-String -Separator "|"
     $regex = "((^|[^\w])(?<connector>(${connectors}))\.(?<action>\w+))+"
@@ -245,7 +259,7 @@ Function ScanUnpackedCanvasApp {
                     $connector = $actionmatch.Groups["connector"].Value
                     $operationId = $actionmatch.Groups["action"].Value
                     
-                    Write-Host "${connector}:${operationId} in ${filepath}:${linenum}" 
+                    #Write-Host "${connector}:${operationId} in ${filepath}:${linenum}" 
                     
                     $usage = [ActionUsage]::new($connector, $operationId, $filepath, "Power Fx")
                     $usage.LineNum = $linenum
@@ -265,6 +279,7 @@ if ($skipCloudFlows -and $skipPowerFx) {
     exit
 }
 
+CheckIsSolutionFolder
 ReadDeprecatedActions
 
 if ($skipCloudFlows -ne $true) {
@@ -291,10 +306,6 @@ $usedActions | Group-Object -Property ActionUniqueName -NoElement | Sort-Object 
 
 $deprecatedUsages = $usedActions | Where-Object -Property Deprecated -EQ -Value $true
 
-#if ($null -eq $deprecatedUsages) {
-#    Write-Output "`nNo usages of deprecated actions! ✔"    
-#}
-#else {
 $numDeprecatedUsages = $($deprecatedUsages | Measure-Object).Count
 
 Write-Output "`nUsages of deprecated actions: $numDeprecatedUsages`n"
@@ -303,4 +314,3 @@ $deprecatedUsages | ForEach-Object {
     $message = "{0}|{1} in {2} at {3}:{4}" -f $_.Connector, $_.Action, $_.Type, $_.Filename, $_.LineNum
     Write-Host $message
 }
-#}
