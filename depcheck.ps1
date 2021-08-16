@@ -34,10 +34,37 @@ class ActionUsage {
     }
 }
 
-if ($skipCloudFlows -and $skipPowerFx) {
-    Write-Error "Nothing to do. Only one of skipCloudFlows or skipPowerFx can be set."
-    exit
+Function ReadDeprecatedActions {
+
+    ## TODO: Give option to pull from the cloud or locally
+
+    ## FIXME: Hardcoded deprecated
+    $deprecatedfilename = Join-Path ${PSScriptRoot} "Deprecated.json"
+
+    Get-Content $deprecatedfilename | ConvertFrom-Json | Foreach-Object {
+        $connector = $_;
+        $uniqueName = $_.UniqueName;
+
+        $_.Actions | ForEach-Object {
+            $action = $_
+            $operationId = $_.OperationId
+
+            $key = BuildKey -connector ${uniqueName} -action ${operationId}
+            $deprecatedActions[$key] = [PSCustomObject]@{
+                Connector = $connector
+                Action    = $action
+            }
+        }
+    }
+    Write-Host "Read" $deprecatedActions.Count "deprecated actions"
 }
+
+Function BuildKey {
+    param ([string]$connector, [string]$action)
+
+    return "${connector}|${action}"
+}
+
 
 Function IsActionDeprecated([string]$key) {
     
@@ -54,13 +81,6 @@ Function Get-DeepProperty([object] $InputObject, [string] $Property) {
     $obj
 }
 
-Function BuildKey {
-    param ([string]$connector, [string]$action)
-
-    $key = "${connector}|${action}"
-    return $key
-}
-
 Function RemoveLeadingString {
     param ([string]$inputStr, [string]$leading)
 
@@ -70,7 +90,33 @@ Function RemoveLeadingString {
     return $inputStr
 }
 
-Function LogDeprecatedFlowActions {
+Function ScanFlows {
+    $workflowfolder = Join-Path $solnfolder "Workflows"
+
+    if (!( Test-Path $workflowfolder -PathType Container)) {
+        Write-Host "No flows exist in solution"
+        return
+    }
+
+    Write-Host "Scanning flows in $workflowfolder"
+    
+    # Perhaps we could check the metadata xml relating to the flow to check if it's a cloud flow.
+    # I think cloud flows are <Category>5</Category> (but need to check)
+    # We don't need to do that right now, because the all json files are cloud flows.
+    Get-ChildItem $workflowfolder -Filter *.json |
+    Foreach-Object {
+    
+        Write-Progress "Checking flow "$_.FullName
+    
+        $flow = Get-Content $_.FullName | ConvertFrom-Json
+    
+        $actions = $flow.properties.definition.actions
+    
+        ScanFlowActions -depth 2 -actions $actions
+    }
+}
+
+Function ScanFlowActions {
     param ([int]$depth, [object]$actions)
 
     if ($actions.getType().Name -eq "PSCustomObject") {
@@ -108,10 +154,12 @@ Function LogDeprecatedFlowActions {
                 }
 
                 # Store action usage
-                $usage = [ActionUsage]::new($connector, $action, $filename, "CloudFlow")
+                $usage = [ActionUsage]::new($connector, $operationId, $filename, "CloudFlow")
                 $usage.Description = "${actionName}: ${description}"
                 $usage.ConnectionRef = $connRefLogicalName
                 $usedActions.add($usage)
+
+                exit
             }
         }
 
@@ -131,58 +179,6 @@ Function LogDeprecatedFlowActions {
     }
 }
 
-Function ReadDeprecatedActions {
-
-    ## TODO: Give option to pull from the cloud or locally
-
-    ## FIXME: Hardcoded deprecated
-    $deprecatedfilename = Join-Path ${PSScriptRoot} "Deprecated.json"
-
-    Get-Content $deprecatedfilename | ConvertFrom-Json | Foreach-Object {
-        $connector = $_;
-        $uniqueName = $_.UniqueName;
-
-        $_.Actions | ForEach-Object {
-            $action = $_
-            $operationId = $_.OperationId
-
-            $key = "${uniqueName}|${operationId}"
-            $deprecatedActions[$key] = [PSCustomObject]@{
-                Connector = $connector
-                Action    = $action
-            }
-        }
-    }
-    Write-Host "Read" $deprecatedActions.Count "deprecated actions"
-}
-
-
-
-Function ScanFlows {
-    $workflowfolder = Join-Path $solnfolder "Workflows"
-
-    if (!( Test-Path $workflowfolder -PathType Container)) {
-        Write-Host "No flows exist in solution"
-        return
-    }
-
-    Write-Host "Scanning flows in $workflowfolder"
-    
-    # Perhaps we could check the metadata xml relating to the flow to check if it's a cloud flow.
-    # I think cloud flows are <Category>5</Category> (but need to check)
-    # We don't need to do that right now, because the all json files are cloud flows.
-    Get-ChildItem $workflowfolder -Filter *.json |
-    Foreach-Object {
-    
-        Write-Progress "Checking flow "$_.FullName
-    
-        $flow = Get-Content $_.FullName | ConvertFrom-Json
-    
-        $actions = $flow.properties.definition.actions
-    
-        LogDeprecatedFlowActions -depth 2 -actions $actions
-    }
-}
 
 Function ScanAllCanvasApps {
     # NOTE: We expect the canvas apps in the solution to have already been exploded with 'pac canvas unpac'
@@ -257,6 +253,11 @@ Function ScanUnpackedCanvasApp {
 }
 
 ## MAIN BODY
+
+if ($skipCloudFlows -and $skipPowerFx) {
+    Write-Error "Nothing to do. Only one of skipCloudFlows or skipPowerFx can be set."
+    exit
+}
 
 ReadDeprecatedActions
 
