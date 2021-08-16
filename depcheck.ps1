@@ -8,6 +8,9 @@ param (
     [switch]$skipPowerFx = $false
 )
 
+Set-StrictMode -Version Latest
+
+
 $deprecatedActions = @{}
 $usedActions = [System.Collections.Generic.List[ActionUsage]]::new()
 
@@ -105,10 +108,12 @@ Function ScanFlows {
     # We don't need to do that right now, because the all json files are cloud flows.
     Get-ChildItem $workflowfolder -Filter *.json |
     Foreach-Object {
+        
+        $flowFilename = $_.FullName
     
-        Write-Progress "Checking flow "$_.FullName
+        Write-Host "Scanning flow "$flowFilename
     
-        $flow = Get-Content $_.FullName | ConvertFrom-Json
+        $flow = Get-Content $flowFilename | ConvertFrom-Json
     
         $actions = $flow.properties.definition.actions
     
@@ -131,7 +136,10 @@ Function ScanFlowActions {
 
             $actionName = $actionObject.Name
             $type = $actionBody.type
-            $description = $actionBody.description
+            $description = ""
+            if ($actionBody.PSobject.Properties.Name -contains "description") {
+                $description = $actionBody.description
+            }
 
             # Check if this is using an OpenApiConnection
             if ($type -eq "OpenApiConnection") {
@@ -148,18 +156,16 @@ Function ScanFlowActions {
 
                 $type = "${connector}:${operationId} via ${connRefLogicalName}"
 
-                $key = "${connector}|${operationId}"
+                $key = BuildKey -connector $connector -action $operationId
                 if ($deprecatedActions.ContainsKey($key)) { 
-                    Write-Host "Deprecated action in flow ${filename}: ${operationId} on connector ${connector} (connectionRef: ${connRefLogicalName}) in step ${actionName}: ${description}"
+                    Write-Host "Deprecated action in flow ${flowFilename}: ${operationId} on connector ${connector} (connectionRef: ${connRefLogicalName}) in step ${actionName}: ${description}"
                 }
 
                 # Store action usage
-                $usage = [ActionUsage]::new($connector, $operationId, $filename, "CloudFlow")
+                $usage = [ActionUsage]::new($connector, $operationId, $flowFilename, "CloudFlow")
                 $usage.Description = "${actionName}: ${description}"
                 $usage.ConnectionRef = $connRefLogicalName
                 $usedActions.add($usage)
-
-                exit
             }
         }
 
@@ -174,7 +180,7 @@ Function ScanFlowActions {
             [int]$newDepth = $depth + 2
             $childActionObject = $actionBody | Select-Object -ExpandProperty $childActions.Name
             # Recurse
-            LogDeprecatedFlowActions -depth $newDepth -actions $childActionObject
+            ScanFlowActions -depth $newDepth -actions $childActionObject
         }
     }
 }
@@ -269,7 +275,7 @@ if ($skipPowerFx -ne $true) {
     ScanAllCanvasApps
 }
 
-$numUsedActions = $usedActions.Count
+$numUsedActions = $($usedActions | Measure-Object).Count
 
 Write-Output "`nSummary of $numUsedActions usages:`n" 
 
@@ -285,11 +291,16 @@ $usedActions | Group-Object -Property ActionUniqueName -NoElement | Sort-Object 
 
 $deprecatedUsages = $usedActions | Where-Object -Property Deprecated -EQ -Value $true
 
-$numDeprecatedUsages = $deprecatedUsages.Count
+#if ($null -eq $deprecatedUsages) {
+#    Write-Output "`nNo usages of deprecated actions! ✔"    
+#}
+#else {
+$numDeprecatedUsages = $($deprecatedUsages | Measure-Object).Count
 
 Write-Output "`nUsages of deprecated actions: $numDeprecatedUsages`n"
-
+    
 $deprecatedUsages | ForEach-Object {
     $message = "{0}|{1} in {2} at {3}:{4}" -f $_.Connector, $_.Action, $_.Type, $_.Filename, $_.LineNum
     Write-Host $message
 }
+#}
