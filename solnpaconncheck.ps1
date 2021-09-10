@@ -1,12 +1,27 @@
-# Check for deprecated actions in Power Automate Cloud Flows or unpacked Canvas Apps
-# Note: The solution file structure is proprietary and subject Cloud flows will exist
+# SUMMARY
+# Check for deprecated actions/connectors within a Power Platform Solution
+#
+# DESCRIPTION
+# Actions within a connector may be deprecated without warning. This script downloads a JSON list of deprecated actions
+# and will check an unpacked solution reporting where deprecated actions are used.  It checks Power Automate Cloud
+# flows and Canvas Apps.
+#
+# TODO
+# Enhance to report instances of deprecated triggers
+#
+# Note: 
+# 1. The solution structure is subject to change since it is proprietary and output by the solutionchecker or power platform CLI.
+# 2. The solution must be exported and unpacked, additionally any msapp files within the solution must also be unpacked.
 
 param (
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, HelpMessage = "Enter the path to the unpacked solution")]
+    [Alias("p", "path")]
     [string]$solnfolder,
     [switch]$skipCloudFlows = $false,
     [switch]$skipPowerFx = $false
 )
+
+Set-Variable -Name DeprecatedActionsUrl -Option Constant -Value "https://connectorstatus.com/Deprecated.json"
 
 # Hash of deprecated actions read in a pre-generated JSON file containing deprecated actions
 $deprecatedActions = @{}
@@ -39,12 +54,21 @@ class ActionUsage {
 
 Function ReadDeprecatedActions {
 
-    ## TODO: Give option to pull from the cloud or locally
 
-    ## FIXME: Hardcoded deprecated
-    $deprecatedfilename = Join-Path ${PSScriptRoot} "Deprecated.json"
+    # Download the latest deprecated actions.
+    Write-Host "Downloading deprecated actions from $DeprecatedActionsUrl"
 
-    Get-Content $deprecatedfilename | ConvertFrom-Json | Foreach-Object {
+    try {
+        $r = Invoke-WebRequest -Uri $DeprecatedActionsUrl
+    }
+    catch {
+        $_.Exception.Message
+        exit
+    }
+
+    #$deprecatedfilename = Join-Path ${PSScriptRoot} "Deprecated.json"
+
+    $r.Content | ConvertFrom-Json | Foreach-Object {
         $connector = $_;
         $uniqueName = $_.UniqueName;
 
@@ -309,7 +333,7 @@ $deprecatedUsages = $usedActions | Where-Object -Property Deprecated -EQ -Value 
 $numDeprecatedUsages = $($deprecatedUsages | Measure-Object).Count
 
 Write-Output "`nUsages of deprecated actions: $numDeprecatedUsages`n"
-    
+
 $deprecatedUsages | ForEach-Object {
     $message = "{0}|{1} in {2} at {3}:{4}" -f $_.Connector, $_.Action, $_.Type, $_.Filename, $_.LineNum
     Write-Host $message

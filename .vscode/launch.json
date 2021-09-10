@@ -10,6 +10,7 @@
             "request": "launch",
             "script": "${file}",
             "cwd": "${file}",
+            "args": ["-solnfolder C:/Dev/Repos/coe-starter-kit/CenterofExcellenceAuditComponents/SolutionPackage -skipCloudFlows"]
         }
     ]
 }
