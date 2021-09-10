@@ -1,17 +1,32 @@
-# SUMMARY
-# Check for deprecated actions/connectors within a Power Platform Solution
-#
-# DESCRIPTION
-# Actions within a connector may be deprecated without warning. This script downloads a JSON list of deprecated actions
-# and will check an unpacked solution reporting where deprecated actions are used.  It checks Power Automate Cloud
-# flows and Canvas Apps.
-#
-# TODO
-# Enhance to report instances of deprecated triggers
-#
-# Note: 
-# 1. The solution structure is subject to change since it is proprietary and output by the solutionchecker or power platform CLI.
-# 2. The solution must be exported and unpacked, additionally any msapp files within the solution must also be unpacked.
+<#
+  .SYNOPSIS
+  Checks connectors and actions used in power platform solutions.
+  .DESCRIPTION
+  Examines an unpacked solution and reports on connectors and actions used. Deprecated actions are downloaded from https://connectorstatus.com. Deprecated actions used in the solution are output along with their location. Power Automate Cloud Flows and Power Fx (e.g. Canvas Apps) are checked.
+
+  TODO
+  Improve to report instances of deprecated triggers
+
+  NOTES/WARNINGS
+  1. The power apps solution structure is proprietary and subject to change.
+  2. The solution must be exported and unpacked, additionally any .msapp files within the solution must also be unpacked.
+
+  .PARAMETER solnFolder
+  Specifies the path to the exploded solution folder.
+
+  .PARAMETER skipCloudFlows
+  Indicates if checking of cloud flows should be not be performed.
+
+  .PARAMETER skipPowerFx
+  Indicates if checking of Canvas Apps/PowerFx should be not be performed.
+
+  .LINK
+  https://philcole.com/post/connector-check
+
+  .EXAMPLE
+  PS> ConnectorCheck.ps1 -solnfolder ./SolutionPackage
+
+#>
 
 param (
     [Parameter(Mandatory = $true, HelpMessage = "Enter the path to the unpacked solution")]
@@ -21,6 +36,8 @@ param (
     [switch]$skipPowerFx = $false
 )
 
+# We use a list of deprecated actions already generated in the cloud. See https://connectorstatus.com for details.
+# If you want to produce your own list, then see https://philcole.org/post/deprecated-actions/ for one method.
 Set-Variable -Name DeprecatedActionsUrl -Option Constant -Value "https://connectorstatus.com/Deprecated.json"
 
 # Hash of deprecated actions read in a pre-generated JSON file containing deprecated actions
