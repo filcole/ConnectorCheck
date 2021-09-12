@@ -21,7 +21,7 @@
   Indicates if checking of Canvas Apps/PowerFx should be not be performed.
 
   .LINK
-  https://philcole.com/post/connector-check
+  https://philcole.org/post/connector-check
 
   .EXAMPLE
   PS> ConnectorCheck.ps1 -solnfolder ./SolutionPackage
