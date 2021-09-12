@@ -264,18 +264,18 @@ Function ScanUnpackedCanvasApp {
         $connection = $connections | Select-Object -ExpandProperty $connectionObject.Name
 
         $connector = $connection.connectionRef.id
-        $displayName = $connection.connectionRef.displayName
         $dataSources = $connection.dataSources[0]
 
         $connector = RemoveLeadingString -inputStr $connector -leading "/providers/microsoft.powerapps/apis/shared_"
 
         $connectors.Add($dataSources, 1)
 
-        Write-Host "Uses connector $connector ($displayName) $dataSources"
+        $displayName = $connection.connectionRef.displayName
+        Write-Verbose "Uses connector $connector ($displayName) $dataSources"
     }
 
     if ($connectors.Keys.Count -eq 0) {
-        Write-Host "No connectors found in canvas app"
+        Write-Verbose "No connectors found in canvas app"
         return
     }
 
